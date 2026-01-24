@@ -75,7 +75,14 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
         # Fundamental Analysis
         fund_data = get_fundamental_analysis(ticker)
         if "error" in fund_data:
-            raise HTTPException(status_code=404, detail=f"Fundamental data failed: {fund_data['error']}")
+            fund_data = {
+                "PE_Ratio": None,
+                "Debt_to_Equity": None,
+                "Price_to_Book": None,
+                "ROE": None,
+                "Dividend_Yield": None,
+                "Market_Cap": "N/A"
+            }
 
         # Sentiment Analysis
         sent_data = get_sentiment_analysis(ticker)
@@ -90,7 +97,13 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
         # Risk Analysis
         risk_data = get_risk_analysis(ticker)
         if "error" in risk_data:
-            raise HTTPException(status_code=404, detail=f"Risk data failed: {risk_data['error']}")
+            risk_data = {
+                "Beta": None,
+                "Distance_from_52W_High_Percent": None,
+                "Distance_from_52W_Low_Percent": None,
+                "High_Debt_Flag": False,
+                "Debt_to_Equity_Raw": None
+            }
 
         return AnalysisResponse(
             ticker=ticker.upper(),

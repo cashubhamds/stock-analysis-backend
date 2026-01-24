@@ -1,12 +1,17 @@
 import yfinance as yf
+from .utils import get_session
 
 def get_risk_analysis(ticker_symbol: str) -> dict:
     """
     Calculates Beta, 52-Week High/Low distance, and Debt flag.
     """
     try:
-        ticker = yf.Ticker(ticker_symbol)
+        session = get_session()
+        ticker = yf.Ticker(ticker_symbol, session=session)
         info = ticker.info
+        
+        if not info or ('regularMarketPrice' not in info and 'currentPrice' not in info):
+            return {"error": "Too many requests or data unavailable"}
         
         current_price = info.get('currentPrice') or info.get('regularMarketPrice')
         fifty_two_week_high = info.get('fiftyTwoWeekHigh')
