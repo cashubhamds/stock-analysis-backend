@@ -1,5 +1,5 @@
-from textblob import TextBlob
 import yfinance as yf
+from textblob import TextBlob
 
 def get_sentiment_analysis(ticker_symbol: str) -> dict:
     """

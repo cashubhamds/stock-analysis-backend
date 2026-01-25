@@ -1,9 +1,10 @@
 import yfinance as yf
 import numpy as np
+import pandas as pd
 
 def calculate_technical_indicators(ticker_symbol: str, period: str = "1y") -> dict:
     """
-    Calculates RSI, Support/Resistance levels, and SMA for a given ticker.
+    Calculates RSI, MACD, Bollinger Bands, and SMA for a given ticker.
     """
     try:
         ticker = yf.Ticker(ticker_symbol)
@@ -20,34 +21,43 @@ def calculate_technical_indicators(ticker_symbol: str, period: str = "1y") -> di
         history['RSI'] = 100 - (100 / (1 + rs))
         current_rsi = history['RSI'].iloc[-1]
 
-        # Calculate SMAs
-        history['SMA_20'] = history['Close'].rolling(window=20).mean()
-        history['SMA_50'] = history['Close'].rolling(window=50).mean()
-        history['SMA_200'] = history['Close'].rolling(window=200).mean()
-        
-        current_smas = {
-            "SMA_20": history['SMA_20'].iloc[-1],
-            "SMA_50": history['SMA_50'].iloc[-1],
-            "SMA_200": history['SMA_200'].iloc[-1]
-        }
+        # Calculate MACD
+        exp1 = history['Close'].ewm(span=12, adjust=False).mean()
+        exp2 = history['Close'].ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
+        signal_line = macd.ewm(span=9, adjust=False).mean()
+        current_macd = macd.iloc[-1]
+        current_signal = signal_line.iloc[-1]
 
-        # Calculate Support & Resistance (Windowed Min/Max over 6 months approx 126 days)
-        # Using a simple window approach to find local min/max
+        # Calculate Bollinger Bands
+        history['SMA_20'] = history['Close'].rolling(window=20).mean()
+        history['STD_20'] = history['Close'].rolling(window=20).std()
+        history['Upper_BB'] = history['SMA_20'] + (history['STD_20'] * 2)
+        history['Lower_BB'] = history['SMA_20'] - (history['STD_20'] * 2)
         
-        # We'll take the last 6 months of data
-        six_month_data = history.tail(126)
+        current_price = history['Close'].iloc[-1]
+        upper_bb = history['Upper_BB'].iloc[-1]
+        lower_bb = history['Lower_BB'].iloc[-1]
         
-        # Simple algorithm: Find local mins and maxs
-        # A more robust way for "zones" might be grouping, but for now we'll take
-        # the absolute min and max of the last 6 months as major support/resistance
-        support_level = six_month_data['Low'].min()
-        resistance_level = six_month_data['High'].max()
+        # BB Position
+        if current_price > upper_bb:
+            bb_pos = "Overbought"
+        elif current_price < lower_bb:
+            bb_pos = "Oversold"
+        else:
+            bb_pos = "Neutral"
+
+        # SMA Trend (last 50 vs last 200)
+        sma_50 = history['Close'].rolling(window=50).mean().iloc[-1]
+        sma_200 = history['Close'].rolling(window=200).mean().iloc[-1]
+        sma_trend = "Bullish" if sma_50 > sma_200 else "Bearish"
 
         return {
-            "RSI": current_rsi if not np.isnan(current_rsi) else None,
-            "SMA": {k: v if not np.isnan(v) else None for k, v in current_smas.items()},
-            "Support_6M": support_level,
-            "Resistance_6M": resistance_level
+            "RSI": round(current_rsi, 2) if not np.isnan(current_rsi) else None,
+            "MACD_Signal": "Buy" if current_macd > current_signal else "Sell",
+            "SMA_Trend": sma_trend,
+            "BB_Position": bb_pos,
+            "current_price": current_price
         }
     except Exception as e:
         return {"error": str(e)}
