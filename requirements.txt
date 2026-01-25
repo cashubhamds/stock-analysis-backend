@@ -6,3 +6,4 @@ numpy
 textblob
 requests
 beautifulsoup4
+pytz

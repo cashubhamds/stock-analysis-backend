@@ -52,12 +52,19 @@ def calculate_technical_indicators(ticker_symbol: str, period: str = "1y") -> di
         sma_200 = history['Close'].rolling(window=200).mean().iloc[-1]
         sma_trend = "Bullish" if sma_50 > sma_200 else "Bearish"
 
+        # Support & Resistance (6-month min/max)
+        six_month_data = history.tail(126) # ~6 months of trading days
+        support_level = six_month_data['Low'].min()
+        resistance_level = six_month_data['High'].max()
+
         return {
             "RSI": round(current_rsi, 2) if not np.isnan(current_rsi) else None,
             "MACD_Signal": "Buy" if current_macd > current_signal else "Sell",
             "SMA_Trend": sma_trend,
             "BB_Position": bb_pos,
-            "current_price": current_price
+            "current_price": current_price,
+            "Support": round(support_level, 2) if not np.isnan(support_level) else None,
+            "Resistance": round(resistance_level, 2) if not np.isnan(resistance_level) else None
         }
     except Exception as e:
         return {"error": str(e)}

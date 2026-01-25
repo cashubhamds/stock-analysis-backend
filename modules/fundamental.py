@@ -22,6 +22,7 @@ def get_fundamental_analysis(ticker_symbol: str) -> dict:
         return {
             "price": current_price,
             "PE_Ratio": info.get('trailingPE'),
+            "PEG_Ratio": info.get('pegRatio'),
             "Debt_to_Equity": debt_equity_ratio,
             "Price_to_Book": info.get('priceToBook'),
             "ROE": info.get('returnOnEquity'),
