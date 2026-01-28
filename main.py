@@ -39,12 +39,15 @@ def is_indian_market_open():
     else:
         return "Closed (Market Hours: 9:15 AM - 3:30 PM IST)"
 
-# Pydantic Models for v3.2 Schema
+# Pydantic Models for v3.3 Schema (Max Compatibility)
 class QuarterlyResult(BaseModel):
     period: str
     revenue: str
     operating_profit: str
     net_profit: str
+    # Aliases for different frontend expectations
+    revenue_cr: Optional[str] = None
+    profit_cr: Optional[str] = None
 
 class TechnicalZones(BaseModel):
     support: Optional[float]
@@ -58,6 +61,9 @@ class TechnicalOutput(BaseModel):
     sma_trend: Optional[str]
     bb_position: Optional[str]
     zones: TechnicalZones
+    # Legacy top-level fields for compatibility
+    support: Optional[float] = None
+    resistance: Optional[float] = None
 
 class FundamentalOutput(BaseModel):
     score: int
@@ -65,6 +71,10 @@ class FundamentalOutput(BaseModel):
     peg_ratio: Optional[float]
     debt_equity: Optional[float]
     roe: Optional[float]
+    # Aliases
+    pegRatio: Optional[float] = None
+    debtEquity: Optional[float] = None
+    peRatio: Optional[float] = None
 
 class SentimentOutput(BaseModel):
     score: int
@@ -72,6 +82,7 @@ class SentimentOutput(BaseModel):
 
 class AnalysisResponse(BaseModel):
     ticker: str
+    price: Optional[float] # Restored legacy field
     current_price: Optional[float]
     closing_price: Optional[float]
     overall_score: int
@@ -80,6 +91,7 @@ class AnalysisResponse(BaseModel):
     fundamental: FundamentalOutput
     sentiment: SentimentOutput
     quarterly_results: List[QuarterlyResult]
+    quarterlyResults: Optional[List[QuarterlyResult]] = None # CamelCase alias
     market_status: str
     is_market_open: bool
     verdict: str
@@ -87,12 +99,12 @@ class AnalysisResponse(BaseModel):
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "message": "Stock Alpha Analyst v3.2 Engine is running"}
+    return {"status": "ok", "message": "Stock Alpha Analyst v3.3 Engine is running"}
 
 @app.get("/analyze", response_model=AnalysisResponse)
 def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELIANCE.NS)")):
     """
-    Analyzes a stock ticker using the v3.2 Engine logic.
+    Analyzes a stock ticker using the v3.3 Engine logic (Compatible with all UI versions).
     """
     try:
         # 1. Extraction
@@ -163,17 +175,24 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
         formatted_q = []
         raw_q = fund_data.get("quarterly_results", [])
         for q in raw_q:
+            rev_cr = f"{q['revenue']/10**7:.2f} Cr" if q['revenue'] else "N/A"
+            profit_cr = f"{q['net_profit']/10**7:.2f} Cr" if q['net_profit'] else "N/A"
             formatted_q.append(QuarterlyResult(
                 period=q['period'],
-                revenue=f"{q['revenue']/10**7:.2f} Cr" if q['revenue'] else "N/A",
+                revenue=rev_cr,
                 operating_profit=f"{q['operating_profit']/10**7:.2f} Cr" if q['operating_profit'] else "N/A",
-                net_profit=f"{q['net_profit']/10**7:.2f} Cr" if q['net_profit'] else "N/A"
+                net_profit=profit_cr,
+                revenue_cr=rev_cr,
+                profit_cr=profit_cr
             ))
 
         price = fund_data.get("price") or tech_data.get("current_price")
+        support = tech_data.get("Support")
+        resistance = tech_data.get("Resistance")
         
         return AnalysisResponse(
             ticker=ticker.upper(),
+            price=price, # Legacy price field
             current_price=price if is_open else None,
             closing_price=price if not is_open else None,
             overall_score=overall_score,
@@ -185,20 +204,23 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
                 macd=tech_data.get("MACD_Signal"),
                 sma_trend=tech_data.get("SMA_Trend"),
                 bb_position=tech_data.get("BB_Position"),
-                zones=TechnicalZones(
-                    support=tech_data.get("Support"),
-                    resistance=tech_data.get("Resistance")
-                )
+                zones=TechnicalZones(support=support, resistance=resistance),
+                support=support, # Legacy
+                resistance=resistance # Legacy
             ),
             fundamental=FundamentalOutput(
                 score=fund_score, 
                 pe=fund_data.get("PE_Ratio"), 
                 peg_ratio=fund_data.get("PEG_Ratio"),
                 debt_equity=de_ratio,
-                roe=fund_data.get("ROE")
+                roe=fund_data.get("ROE"),
+                pegRatio=fund_data.get("PEG_Ratio"),
+                debtEquity=de_ratio,
+                peRatio=fund_data.get("PE_Ratio")
             ),
             sentiment=SentimentOutput(score=sent_score, headlines=headlines[:5]),
             quarterly_results=formatted_q,
+            quarterlyResults=formatted_q, # Legacy/Alias
             market_status=m_status,
             is_market_open=is_open,
             verdict=verdict,
