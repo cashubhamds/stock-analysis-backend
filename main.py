@@ -39,7 +39,17 @@ def is_indian_market_open():
     else:
         return "Closed (Market Hours: 9:15 AM - 3:30 PM IST)"
 
-# Pydantic Models for v3.1 Schema
+# Pydantic Models for v3.2 Schema
+class QuarterlyResult(BaseModel):
+    period: str
+    revenue: str
+    operating_profit: str
+    net_profit: str
+
+class TechnicalZones(BaseModel):
+    support: Optional[float]
+    resistance: Optional[float]
+
 class TechnicalOutput(BaseModel):
     score: int
     rsi: Optional[float]
@@ -47,8 +57,7 @@ class TechnicalOutput(BaseModel):
     macd: Optional[str]
     sma_trend: Optional[str]
     bb_position: Optional[str]
-    support: Optional[float]
-    resistance: Optional[float]
+    zones: TechnicalZones
 
 class FundamentalOutput(BaseModel):
     score: int
@@ -63,24 +72,27 @@ class SentimentOutput(BaseModel):
 
 class AnalysisResponse(BaseModel):
     ticker: str
-    price: Optional[float]
+    current_price: Optional[float]
+    closing_price: Optional[float]
     overall_score: int
     signal: str
     technical: TechnicalOutput
     fundamental: FundamentalOutput
     sentiment: SentimentOutput
+    quarterly_results: List[QuarterlyResult]
     market_status: str
+    is_market_open: bool
     verdict: str
     rationale: str
 
 @app.get("/")
 def health_check():
-    return {"status": "ok", "message": "Stock Alpha Analyst v3.1 Engine is running"}
+    return {"status": "ok", "message": "Stock Alpha Analyst v3.2 Engine is running"}
 
 @app.get("/analyze", response_model=AnalysisResponse)
 def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELIANCE.NS)")):
     """
-    Analyzes a stock ticker using the v3.1 Engine logic.
+    Analyzes a stock ticker using the v3.2 Engine logic.
     """
     try:
         # 1. Extraction
@@ -88,16 +100,33 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
         fund_data = get_fundamental_analysis(ticker)
         sent_data = get_sentiment_analysis(ticker)
         
-        # Validation: If both major sources fail, the ticker likely doesn't exist
+        # Validation
         if "error" in tech_data and ("error" in fund_data or fund_data.get("price") is None):
             raise HTTPException(
                 status_code=404, 
-                detail=f"Stock ticker '{ticker.upper()}' not found. Please check the symbol (e.g., RELIANCE.NS for NSE stocks)."
+                detail=f"Stock ticker '{ticker.upper()}' not found."
             )
         
-        # 2. Logic & Scoring
+        # 2. Market Info
+        ist = pytz.timezone('Asia/Kolkata')
+        now = datetime.now(ist)
+        is_open = False
+        m_status = "Closed"
         
-        # Technical Score
+        if now.weekday() < 5:
+            m_start = now.replace(hour=9, minute=15, second=0)
+            m_end = now.replace(hour=15, minute=30, second=0)
+            if m_start <= now <= m_end:
+                is_open = True
+                m_status = "Open 🟢"
+            else:
+                m_status = "Closed"
+        else:
+            m_status = "Closed (Weekend)"
+
+        # 3. Logic & Scoring
+        
+        # Technical
         rsi = tech_data.get("RSI")
         tech_score = 40
         trend = "Neutral"
@@ -110,51 +139,43 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
             else:
                 trend = "Oversold"
         
-        # Fundamental Score
+        # Fundamental
         de_ratio = fund_data.get("Debt_to_Equity")
         fund_score = 50
         if de_ratio is not None and de_ratio < 1:
             fund_score = 90
             
-        # Sentiment Score
+        # Sentiment
         headlines = [h['headline'] for h in sent_data.get("headlines", [])]
         avg_polarity = sent_data.get("average_polarity", 0)
-        sent_score = int((avg_polarity + 1) * 50) # Scale -1 to 1 to 0 to 100
+        sent_score = int((avg_polarity + 1) * 50)
         
-        # Overall Score
         overall_score = int((tech_score * 0.4) + (fund_score * 0.4) + (sent_score * 0.2))
         
-        # Signal & Verdict
-        if overall_score > 80:
-            signal = "STRONG BUY"
-            verdict = "TREASURE 💎"
-        elif overall_score > 60:
-            signal = "BUY"
-            verdict = "TREASURE 💎"
+        if overall_score > 60:
+            signal, verdict = "BUY", "TREASURE 💎"
         elif overall_score > 40:
-            signal = "HOLD"
-            verdict = "TRAP ⚠️"
+            signal, verdict = "HOLD", "TRAP ⚠️"
         else:
-            signal = "SELL"
-            verdict = "TRAP ⚠️"
+            signal, verdict = "SELL", "TRAP ⚠️"
             
-        # Rationale (CA-style)
-        pe = fund_data.get("PE_Ratio")
-        peg = fund_data.get("PEG_Ratio")
-        roe = fund_data.get("ROE")
-        rationale = f"Based on our analysis, {ticker.upper()} currently shows a {trend} technical trend with an RSI of {rsi if rsi else 'N/A'}. "
-        rationale += f"Fundamentally, the company carries a Debt-to-Equity ratio of {de_ratio if de_ratio else 'N/A'}, "
-        if de_ratio is not None and de_ratio < 1:
-            rationale += "indicating a healthy balance sheet. "
-        else:
-            rationale += "which warrants caution regarding leverage. "
-        if pe:
-            rationale += f"The P/E ratio stands at {pe}, reflecting current market valuation. "
-        rationale += f"Combining these factors with a sentiment score of {sent_score}, our professional verdict is that this stock is a {verdict}."
+        # Quarterly Results Formatting (to Crores)
+        formatted_q = []
+        raw_q = fund_data.get("quarterly_results", [])
+        for q in raw_q:
+            formatted_q.append(QuarterlyResult(
+                period=q['period'],
+                revenue=f"{q['revenue']/10**7:.2f} Cr" if q['revenue'] else "N/A",
+                operating_profit=f"{q['operating_profit']/10**7:.2f} Cr" if q['operating_profit'] else "N/A",
+                net_profit=f"{q['net_profit']/10**7:.2f} Cr" if q['net_profit'] else "N/A"
+            ))
 
+        price = fund_data.get("price") or tech_data.get("current_price")
+        
         return AnalysisResponse(
             ticker=ticker.upper(),
-            price=fund_data.get("price") or tech_data.get("current_price"),
+            current_price=price if is_open else None,
+            closing_price=price if not is_open else None,
             overall_score=overall_score,
             signal=signal,
             technical=TechnicalOutput(
@@ -164,20 +185,24 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
                 macd=tech_data.get("MACD_Signal"),
                 sma_trend=tech_data.get("SMA_Trend"),
                 bb_position=tech_data.get("BB_Position"),
-                support=tech_data.get("Support"),
-                resistance=tech_data.get("Resistance")
+                zones=TechnicalZones(
+                    support=tech_data.get("Support"),
+                    resistance=tech_data.get("Resistance")
+                )
             ),
             fundamental=FundamentalOutput(
                 score=fund_score, 
-                pe=pe, 
-                peg_ratio=peg,
+                pe=fund_data.get("PE_Ratio"), 
+                peg_ratio=fund_data.get("PEG_Ratio"),
                 debt_equity=de_ratio,
-                roe=roe
+                roe=fund_data.get("ROE")
             ),
             sentiment=SentimentOutput(score=sent_score, headlines=headlines[:5]),
-            market_status=is_indian_market_open(),
+            quarterly_results=formatted_q,
+            market_status=m_status,
+            is_market_open=is_open,
             verdict=verdict,
-            rationale=rationale
+            rationale=f"Based on our analysis, {ticker.upper()} currently shows a {trend} technical trend. Fundamentally, the company carries a Debt-to-Equity ratio of {de_ratio if de_ratio else 'N/A'}. Verdict: {verdict}"
         )
         
     except HTTPException:

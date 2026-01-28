@@ -19,6 +19,26 @@ def get_fundamental_analysis(ticker_symbol: str) -> dict:
         raw_debt_equity = info.get('debtToEquity')
         debt_equity_ratio = raw_debt_equity / 100.0 if raw_debt_equity is not None else None
 
+        # Quarterly Financials (Latest Two)
+        qf = ticker.quarterly_financials
+        quarterly_results = []
+        if not qf.empty:
+            try:
+                # Transpose to have dates as index
+                qf_t = qf.T
+                # Select the latest two quarters
+                latest_two = qf_t.head(2)
+                
+                for index, row in latest_two.iterrows():
+                    quarterly_results.append({
+                        "period": index.strftime('%b %Y'),
+                        "revenue": row.get('Total Revenue'),
+                        "operating_profit": row.get('Operating Income'),
+                        "net_profit": row.get('Net Income')
+                    })
+            except Exception:
+                pass
+
         return {
             "price": current_price,
             "PE_Ratio": info.get('trailingPE'),
@@ -27,7 +47,8 @@ def get_fundamental_analysis(ticker_symbol: str) -> dict:
             "Price_to_Book": info.get('priceToBook'),
             "ROE": info.get('returnOnEquity'),
             "Dividend_Yield": info.get('dividendYield'),
-            "Market_Cap": format_crores(info.get('marketCap'))
+            "Market_Cap": format_crores(info.get('marketCap')),
+            "quarterly_results": quarterly_results
         }
     except Exception as e:
         return {"error": str(e)}
