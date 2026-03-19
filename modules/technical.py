@@ -2,8 +2,58 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 import logging
+from datetime import date, timedelta
+
+try:
+    from jugaad_data.nse import stock_df
+    JUGAAD_AVAILABLE = True
+except ImportError:
+    JUGAAD_AVAILABLE = False
+
+from .utils import get_session
 
 logger = logging.getLogger(__name__)
+
+def fetch_jugaad_fallback(ticker_symbol: str):
+    if not JUGAAD_AVAILABLE or not ticker_symbol.endswith(".NS"):
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        
+    base_symbol = ticker_symbol.replace(".NS", "")
+    end_date = date.today()
+    start_date = end_date - timedelta(days=730)
+    
+    try:
+        logger.info(f"[{ticker_symbol}] Attempting jugaad-data fallback for NSE...")
+        raw_df = stock_df(symbol=base_symbol, from_date=start_date, to_date=end_date, series="EQ")
+        if raw_df.empty:
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            
+        df = raw_df[['DATE', 'OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOLUME']].copy()
+        df['DATE'] = pd.to_datetime(df['DATE'])
+        df.set_index('DATE', inplace=True)
+        df.sort_index(ascending=True, inplace=True) 
+        df.rename(columns={'OPEN': 'Open', 'HIGH': 'High', 'LOW': 'Low', 'CLOSE': 'Close', 'VOLUME': 'Volume'}, inplace=True)
+
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+        d_hist = df.tail(60)
+        
+        w_hist = df.resample('W').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+        w_hist = w_hist[w_hist.index >= (pd.Timestamp.today() - pd.DateOffset(months=6))]
+        
+        try:
+            m_hist = df.resample('ME').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+        except Exception:
+            m_hist = df.resample('M').agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}).dropna()
+            
+        m_hist = m_hist[m_hist.index >= (pd.Timestamp.today() - pd.DateOffset(years=2))]
+        
+        logger.info(f"[{ticker_symbol}] Jugaad fallback success!")
+        return d_hist, w_hist, m_hist
+    except Exception as e:
+        logger.error(f"[{ticker_symbol}] Jugaad fallback error: {e}", exc_info=True)
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 def calculate_atr(df, period=14):
     if len(df) < period:
@@ -53,24 +103,23 @@ def get_trend_signal(df):
     else:
         return "Bearish"
 
-from .utils import get_session
-
 def calculate_technical_indicators(ticker_symbol: str) -> dict:
     """
-    Calculates detailed technical indicators for v3.4 Engine.
+    Calculates detailed technical indicators for v3.4 Engine with NSE fallback.
     """
     try:
         session = get_session()
         ticker = yf.Ticker(ticker_symbol, session=session)
         
         # 1. Multi-timeframe Analysis
-        # Daily
         d_hist = ticker.history(period="60d", interval="1d")
-        # Weekly
         w_hist = ticker.history(period="6mo", interval="1wk")
-        # Monthly
         m_hist = ticker.history(period="2y", interval="1mo")
         
+        if d_hist.empty:
+            logger.warning(f"[{ticker_symbol}] yfinance returned empty dataframe. Activating fallback.")
+            d_hist, w_hist, m_hist = fetch_jugaad_fallback(ticker_symbol)
+
         if d_hist.empty:
             return {"error": "No historical data found"}
 
