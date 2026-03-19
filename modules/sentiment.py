@@ -1,5 +1,8 @@
 import yfinance as yf
 from textblob import TextBlob
+import logging
+
+logger = logging.getLogger(__name__)
 
 def get_sentiment_analysis(ticker_symbol: str) -> dict:
     """
@@ -48,4 +51,5 @@ def get_sentiment_analysis(ticker_symbol: str) -> dict:
             "aggregated_sentiment": aggregated_sentiment
         }
     except Exception as e:
+        logger.error(f"[{ticker_symbol}] Sentiment fetch error: {e}", exc_info=True)
         return {"error": str(e)}

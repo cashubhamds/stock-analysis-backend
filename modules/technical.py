@@ -1,8 +1,13 @@
 import yfinance as yf
 import numpy as np
 import pandas as pd
+import logging
+
+logger = logging.getLogger(__name__)
 
 def calculate_atr(df, period=14):
+    if len(df) < period:
+        return pd.Series(index=df.index, dtype=float)
     high_low = df['High'] - df['Low']
     high_cp = np.abs(df['High'] - df['Close'].shift())
     low_cp = np.abs(df['Low'] - df['Close'].shift())
@@ -12,6 +17,8 @@ def calculate_atr(df, period=14):
     return atr
 
 def calculate_supertrend(df, period=10, multiplier=3):
+    if len(df) < period:
+        return None, None, None
     atr = calculate_atr(df, period)
     hl2 = (df['High'] + df['Low']) / 2
     final_ub = hl2 + (multiplier * atr)
@@ -64,35 +71,51 @@ def calculate_technical_indicators(ticker_symbol: str) -> dict:
         if d_hist.empty:
             return {"error": "No historical data found"}
 
+        # Defensive check for minimum days
+        if len(d_hist) < 20:
+             logger.warning(f"[{ticker_symbol}] Less than 20 days of data found, some indicators may be null.")
+
         # 2. Indicators (on Daily)
         # RSI
-        delta = d_hist['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        d_hist['RSI'] = 100 - (100 / (1 + rs))
-        current_rsi = d_hist['RSI'].iloc[-1]
+        current_rsi = None
+        if len(d_hist) >= 15:
+            delta = d_hist['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            d_hist['RSI'] = 100 - (100 / (1 + rs))
+            current_rsi = d_hist['RSI'].iloc[-1]
 
         # MACD
-        exp1 = d_hist['Close'].ewm(span=12, adjust=False).mean()
-        exp2 = d_hist['Close'].ewm(span=26, adjust=False).mean()
-        macd = exp1 - exp2
-        signal_line = macd.ewm(span=9, adjust=False).mean()
-        macd_signal = "Buy" if macd.iloc[-1] > signal_line.iloc[-1] else "Sell"
+        macd_signal = "Neutral"
+        if len(d_hist) >= 26:
+            exp1 = d_hist['Close'].ewm(span=12, adjust=False).mean()
+            exp2 = d_hist['Close'].ewm(span=26, adjust=False).mean()
+            macd = exp1 - exp2
+            signal_line = macd.ewm(span=9, adjust=False).mean()
+            macd_signal = "Buy" if macd.iloc[-1] > signal_line.iloc[-1] else "Sell"
 
         # Bollinger Bands
-        sma_20 = d_hist['Close'].rolling(window=20).mean()
-        std_20 = d_hist['Close'].rolling(window=20).std()
-        upper_bb = sma_20 + (std_20 * 2)
-        lower_bb = sma_20 - (std_20 * 2)
+        upper_bb_val = None
+        lower_bb_val = None
+        bb_pos = "Neutral"
         current_price = d_hist['Close'].iloc[-1]
+
+        if len(d_hist) >= 20:
+            sma_20 = d_hist['Close'].rolling(window=20).mean()
+            std_20 = d_hist['Close'].rolling(window=20).std()
+            upper_bb = sma_20 + (std_20 * 2)
+            lower_bb = sma_20 - (std_20 * 2)
+            upper_bb_val = upper_bb.iloc[-1]
+            lower_bb_val = lower_bb.iloc[-1]
+            bb_pos = "Overbought" if current_price > upper_bb_val else "Oversold" if current_price < lower_bb_val else "Neutral"
         
         # SuperTrend
         st_signal, st_ub, st_lb = calculate_supertrend(d_hist)
 
         # 3. Support & Resistance
-        support = d_hist['Low'].tail(30).min()
-        resistance = d_hist['High'].tail(30).max()
+        support = d_hist['Low'].tail(30).min() if not d_hist.empty else None
+        resistance = d_hist['High'].tail(30).max() if not d_hist.empty else None
 
         # 4. Expert Multi-timeframe Summary
         timeframe_signals = {
@@ -102,21 +125,22 @@ def calculate_technical_indicators(ticker_symbol: str) -> dict:
         }
 
         return {
-            "RSI": round(current_rsi, 2) if not np.isnan(current_rsi) else None,
+            "RSI": round(current_rsi, 2) if current_rsi is not None and not np.isnan(current_rsi) else None,
             "MACD_Signal": macd_signal,
             "Bollinger": {
-                "upper": round(upper_bb.iloc[-1], 2),
-                "lower": round(lower_bb.iloc[-1], 2),
-                "position": "Overbought" if current_price > upper_bb.iloc[-1] else "Oversold" if current_price < lower_bb.iloc[-1] else "Neutral"
+                "upper": round(upper_bb_val, 2) if upper_bb_val is not None and not np.isnan(upper_bb_val) else None,
+                "lower": round(lower_bb_val, 2) if lower_bb_val is not None and not np.isnan(lower_bb_val) else None,
+                "position": bb_pos
             },
             "SuperTrend": {
-                "signal": "Bullish" if st_signal else "Bearish",
-                "value": round(st_lb if st_signal else st_ub, 2)
+                "signal": "Bullish" if st_signal else "Bearish" if st_signal is False else "Neutral",
+                "value": round(st_lb if st_signal else st_ub, 2) if st_signal is not None and not np.isnan(st_lb if st_signal else st_ub) else None
             },
-            "Support": round(support, 2),
-            "Resistance": round(resistance, 2),
+            "Support": round(support, 2) if support is not None and not np.isnan(support) else None,
+            "Resistance": round(resistance, 2) if resistance is not None and not np.isnan(resistance) else None,
             "current_price": current_price,
             "timeframe_analysis": timeframe_signals
         }
     except Exception as e:
+        logger.error(f"[{ticker_symbol}] Technical fetch error: {e}", exc_info=True)
         return {"error": str(e)}

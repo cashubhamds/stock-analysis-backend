@@ -10,6 +10,11 @@ from datetime import datetime, time
 import pytz
 import uvicorn
 import numpy as np
+import logging
+import re
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Indian Equity Intelligence Backend")
 
@@ -40,84 +45,92 @@ def is_indian_market_open():
     else:
         return "Closed (Market Hours: 9:15 AM - 3:30 PM IST)"
 
-# Pydantic Models for v3.4 Schema (Ultra Financials & Master Analysis)
+# Pydantic Models for v3.4 Schema
 
 class Officer(BaseModel):
-    name: str
-    title: str
+    name: Optional[str] = None
+    title: Optional[str] = None
 
 class CompanyInfo(BaseModel):
-    name: str
+    name: Optional[str] = None
     full_name: Optional[str] = None
-    industry: Optional[str]
-    sector: Optional[str]
-    summary: Optional[str]
-    industry_pe: Optional[str]
-    officers: List[Officer]
+    industry: Optional[str] = None
+    sector: Optional[str] = None
+    summary: Optional[str] = None
+    industry_pe: Optional[str] = None
+    officers: Optional[List[Officer]] = []
 
 class FinancialResult(BaseModel):
     period: str
-    revenue: str
-    operating_profit: str
-    net_profit: str
+    revenue: Optional[str] = None
+    operating_profit: Optional[str] = None
+    net_profit: Optional[str] = None
 
 class TechnicalBollinger(BaseModel):
-    upper: float
-    lower: float
-    position: str
+    upper: Optional[float] = None
+    lower: Optional[float] = None
+    position: Optional[str] = None
 
 class TechnicalSuperTrend(BaseModel):
-    signal: str
-    value: float
+    signal: Optional[str] = None
+    value: Optional[float] = None
 
 class TimeframeAnalysis(BaseModel):
-    daily: str
-    weekly: str
-    monthly: str
+    daily: Optional[str] = None
+    weekly: Optional[str] = None
+    monthly: Optional[str] = None
 
 class TechnicalOutput(BaseModel):
     score: int
-    rsi: Optional[float]
-    trend: str
-    macd: str
-    bollinger: TechnicalBollinger
-    super_trend: TechnicalSuperTrend
-    support: float
-    resistance: float
-    timeframe_analysis: TimeframeAnalysis
+    rsi: Optional[float] = None
+    trend: Optional[str] = None
+    macd: Optional[str] = None
+    bollinger: Optional[TechnicalBollinger] = None
+    super_trend: Optional[TechnicalSuperTrend] = None
+    support: Optional[float] = None
+    resistance: Optional[float] = None
+    timeframe_analysis: Optional[TimeframeAnalysis] = None
 
 class FundamentalOutput(BaseModel):
     score: int
-    pe: Optional[float]
-    industry_pe: Optional[str]
-    peg_ratio: Optional[float]
-    debt_equity: Optional[float]
-    roe: Optional[float]
-    roce: Optional[float]
-    intrinsic_value: Optional[float]
-    market_cap: str
-    dividend_yield: Optional[float]
+    pe: Optional[float] = None
+    industry_pe: Optional[str] = None
+    peg_ratio: Optional[float] = None
+    debt_equity: Optional[float] = None
+    roe: Optional[float] = None
+    roce: Optional[float] = None
+    intrinsic_value: Optional[float] = None
+    market_cap: Optional[str] = None
+    dividend_yield: Optional[float] = None
 
 class SentimentOutput(BaseModel):
     score: int
-    headlines: List[str]
+    headlines: Optional[List[str]] = []
 
 class AnalysisResponse(BaseModel):
+    success: bool
+    partial: bool
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+    display_message: Optional[str] = None
+    warnings: List[str] = []
+    meta: Optional[Dict] = None
+
     ticker: str
-    company_info: CompanyInfo
-    current_price: Optional[float]
-    closing_price: Optional[float]
-    overall_score: int
-    signal: str
-    technical: TechnicalOutput
-    fundamental: FundamentalOutput
-    sentiment: SentimentOutput
-    quarterly_results: List[FinancialResult]
-    annual_results: List[FinancialResult]
-    market_status: str
-    is_market_open: bool
-    verdict: str
-    rationale: str
+    company_info: Optional[CompanyInfo] = None
+    current_price: Optional[float] = None
+    closing_price: Optional[float] = None
+    overall_score: Optional[int] = None
+    signal: Optional[str] = None
+    technical: Optional[TechnicalOutput] = None
+    fundamental: Optional[FundamentalOutput] = None
+    sentiment: Optional[SentimentOutput] = None
+    quarterly_results: Optional[List[FinancialResult]] = []
+    annual_results: Optional[List[FinancialResult]] = []
+    market_status: Optional[str] = None
+    is_market_open: Optional[bool] = None
+    verdict: Optional[str] = None
+    rationale: Optional[str] = None
 
 @app.get("/")
 def health_check():
@@ -128,15 +141,58 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
     """
     Analyzes a stock ticker using the v3.4 Engine logic.
     """
+    logger.info(f"Received request for ticker: {ticker}")
+    ticker_original = ticker
+    
+    # 0. Input validation
+    ticker = ticker.strip().upper()
+    if not re.match(r'^[A-Z0-9\-\.]+$', ticker):
+        logger.warning(f"Invalid symbol format: {ticker}")
+        return AnalysisResponse(
+            success=False,
+            partial=False,
+            ticker=ticker,
+            error_code="INVALID_SYMBOL_FORMAT",
+            message="Ticker format is invalid.",
+            display_message=f"Invalid format for ticker '{ticker_original}'.",
+            meta={"timestamp_utc": datetime.utcnow().isoformat()}
+        )
+
+    warnings = []
+    partial = False
+    
     try:
         # 1. Multi-source Extraction
+        logger.info(f"[{ticker}] Fetching technical data...")
         tech_data = calculate_technical_indicators(ticker)
-        fund_data = get_fundamental_analysis(ticker)
-        sent_data = get_sentiment_analysis(ticker)
         
-        # Validation
+        if "error" in tech_data:
+            logger.error(f"[{ticker}] Technical data error: {tech_data['error']}")
+            return AnalysisResponse(
+                success=False,
+                partial=False,
+                ticker=ticker,
+                error_code="SYMBOL_NOT_FOUND",
+                message="No market data found for this ticker.",
+                display_message=f"No market data found for {ticker}",
+                meta={"timestamp_utc": datetime.utcnow().isoformat()}
+            )
+            
+        logger.info(f"[{ticker}] Fetching fundamental data...")
+        fund_data = get_fundamental_analysis(ticker)
         if "error" in fund_data:
-             raise HTTPException(status_code=404, detail=f"Stock ticker '{ticker.upper()}' not found.")
+             logger.warning(f"[{ticker}] Fundamental data error: {fund_data['error']}")
+             warnings.append(f"Fundamentals unavailable: {fund_data['error']}")
+             partial = True
+             fund_data = {}  # Default to empty structure
+        
+        logger.info(f"[{ticker}] Fetching sentiment data...")
+        sent_data = get_sentiment_analysis(ticker)
+        if "error" in sent_data:
+             logger.warning(f"[{ticker}] Sentiment data error: {sent_data['error']}")
+             warnings.append(f"News sentiment unavailable: {sent_data['error']}")
+             partial = True
+             sent_data = {}
         
         # 2. Market Environment
         m_status = is_indian_market_open()
@@ -146,23 +202,23 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
         def to_cr(val):
             return f"{val/10**7:.2f} Cr" if val and not np.isnan(val) else "N/A"
 
-        formatted_q = [
-            FinancialResult(
-                period=q['period'],
-                revenue=to_cr(q['revenue']),
-                operating_profit=to_cr(q['operating_profit']),
-                net_profit=to_cr(q['net_profit'])
-            ) for q in fund_data.get("quarterly_results", [])
-        ]
-        
-        formatted_a = [
-            FinancialResult(
-                period=a['period'],
-                revenue=to_cr(a['revenue']),
-                operating_profit=to_cr(a['operating_profit']),
-                net_profit=to_cr(a['net_profit'])
-            ) for a in fund_data.get("annual_results", [])
-        ]
+        formatted_q = []
+        for q in fund_data.get("quarterly_results", []):
+            formatted_q.append(FinancialResult(
+                period=q.get('period', 'N/A'),
+                revenue=to_cr(q.get('revenue')),
+                operating_profit=to_cr(q.get('operating_profit')),
+                net_profit=to_cr(q.get('net_profit'))
+            ))
+            
+        formatted_a = []
+        for a in fund_data.get("annual_results", []):
+            formatted_a.append(FinancialResult(
+                period=a.get('period', 'N/A'),
+                revenue=to_cr(a.get('revenue')),
+                operating_profit=to_cr(a.get('operating_profit')),
+                net_profit=to_cr(a.get('net_profit'))
+            ))
 
         # 4. Expert Scoring Logic
         # Technical Score
@@ -193,21 +249,28 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
 
         # 5. Trading Expert Analysis (Multi-timeframe)
         tf = tech_data.get("timeframe_analysis", {})
-        expert_rationale = f"Technical View: The stock is showing a {tf.get('daily')} trend on the daily chart and a {tf.get('weekly')} trend on the weekly chart. "
-        if tf.get('daily') == tf.get('weekly') == tf.get('monthly'):
+        expert_rationale = f"Technical View: The stock is showing a {tf.get('daily', 'Neutral')} trend on the daily chart and a {tf.get('weekly', 'Neutral')} trend on the weekly chart. "
+        if tf.get('daily') == tf.get('weekly') == tf.get('monthly') and tf.get('daily') not in [None, "N/A"]:
             expert_rationale += f"There is rare multi-timeframe alignment signaling a powerful {tf.get('daily')} phase. "
-        elif "Bullish" in tf.get('daily') and "Bearish" in tf.get('weekly'):
+        elif tf.get('daily') and "Bullish" in tf.get('daily') and tf.get('weekly') and "Bearish" in tf.get('weekly'):
             expert_rationale += "We are seeing a potential bullish reversal on the short-term chart despite long-term pressure. "
         else:
-            expert_rationale += f"The monthly chart remains {tf.get('monthly')}, indicating overall sideways or trending behavior. "
+            expert_rationale += f"The monthly chart remains {tf.get('monthly', 'Neutral')}, indicating overall sideways or trending behavior. "
             
-        expert_rationale += f"Fundamental View: With an ROCE of {roce:.2f}% if available else N/A and an Intrinsic Value of {metrics.get('intrinsic_value'):.2f}, "
+        roce_val = f"{roce:.2f}%" if roce else "N/A"
+        iv_val = f"{metrics.get('intrinsic_value'):.2f}" if metrics.get('intrinsic_value') else "N/A"
+        
+        expert_rationale += f"Fundamental View: With an ROCE of {roce_val} and an Intrinsic Value of {iv_val}, "
         expert_rationale += f"the stock is technically {st_signal}. Overall Verdict: {verdict}."
 
-        price = metrics.get("price")
+        price = metrics.get("price") or tech_data.get("current_price")
 
-        return AnalysisResponse(
-            ticker=ticker.upper(),
+        response = AnalysisResponse(
+            success=True,
+            partial=partial,
+            warnings=warnings,
+            meta={"timestamp_utc": datetime.utcnow().isoformat()},
+            ticker=ticker,
             company_info=fund_data.get("company_info"),
             current_price=price if is_open else None,
             closing_price=price if not is_open else None,
@@ -218,8 +281,8 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
                 rsi=rsi,
                 trend=tf.get("daily", "Neutral"),
                 macd=tech_data.get("MACD_Signal"),
-                bollinger=TechnicalBollinger(**tech_data.get("Bollinger")),
-                super_trend=TechnicalSuperTrend(**tech_data.get("SuperTrend")),
+                bollinger=TechnicalBollinger(**tech_data.get("Bollinger", {})),
+                super_trend=TechnicalSuperTrend(**tech_data.get("SuperTrend", {})),
                 support=tech_data.get("Support"),
                 resistance=tech_data.get("Resistance"),
                 timeframe_analysis=TimeframeAnalysis(**tf)
@@ -227,7 +290,7 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
             fundamental=FundamentalOutput(
                 score=fund_score,
                 pe=metrics.get("pe_ratio"),
-                industry_pe=str(metrics.get("industry_pe")),
+                industry_pe=str(metrics.get("industry_pe")) if metrics.get("industry_pe") else None,
                 peg_ratio=metrics.get("peg_ratio"),
                 debt_equity=metrics.get("debt_to_equity"),
                 roe=metrics.get("roe"),
@@ -248,12 +311,16 @@ def analyze_stock(ticker: str = Query(..., description="Ticker symbol (e.g. RELI
             rationale=expert_rationale
         )
         
+        logger.info(f"[{ticker}] Analysis complete. Success={response.success}, Partial={response.partial}")
+        return response
+        
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        print(traceback.format_exc())
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"[{ticker}] Unhandled exception in analyze_stock: {e}", exc_info=True)
+        # Fallback for unexpected errors instead of raw 500 if possible, but 500 is fine for true crashes 
+        # as requested "500 only for true backend server failures".
+        raise HTTPException(status_code=500, detail="Internal server error during analysis")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
