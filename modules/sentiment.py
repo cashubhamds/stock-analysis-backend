@@ -9,7 +9,9 @@ def get_sentiment_analysis(ticker_symbol: str) -> dict:
     Scrapes the latest headlines and analyzes sentiment using TextBlob.
     """
     try:
-        ticker = yf.Ticker(ticker_symbol)
+        from .utils import get_session
+        session = get_session()
+        ticker = yf.Ticker(ticker_symbol, session=session)
         news = ticker.news
         
         if not news:

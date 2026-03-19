@@ -53,12 +53,15 @@ def get_trend_signal(df):
     else:
         return "Bearish"
 
+from .utils import get_session
+
 def calculate_technical_indicators(ticker_symbol: str) -> dict:
     """
     Calculates detailed technical indicators for v3.4 Engine.
     """
     try:
-        ticker = yf.Ticker(ticker_symbol)
+        session = get_session()
+        ticker = yf.Ticker(ticker_symbol, session=session)
         
         # 1. Multi-timeframe Analysis
         # Daily
