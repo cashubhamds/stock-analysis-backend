@@ -10,7 +10,7 @@ try:
 except ImportError:
     JUGAAD_AVAILABLE = False
 
-from .utils import get_session
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +108,7 @@ def calculate_technical_indicators(ticker_symbol: str) -> dict:
     Calculates detailed technical indicators for v3.4 Engine with NSE fallback.
     """
     try:
-        session = get_session()
-        ticker = yf.Ticker(ticker_symbol, session=session)
+        ticker = yf.Ticker(ticker_symbol)
         
         # 1. Multi-timeframe Analysis
         d_hist = ticker.history(period="60d", interval="1d")

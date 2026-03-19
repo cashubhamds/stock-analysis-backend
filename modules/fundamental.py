@@ -2,7 +2,7 @@ import yfinance as yf
 import numpy as np
 import math
 import logging
-from .utils import format_crores, get_session
+from .utils import format_crores
 
 logger = logging.getLogger(__name__)
 
@@ -11,8 +11,7 @@ def get_fundamental_analysis(ticker_symbol: str) -> dict:
     Extracts comprehensive fundamental data for v3.4 Engine.
     """
     try:
-        session = get_session()
-        ticker = yf.Ticker(ticker_symbol, session=session)
+        ticker = yf.Ticker(ticker_symbol)
         info = ticker.info
         
         if not info or ('regularMarketPrice' not in info and 'currentPrice' not in info):
